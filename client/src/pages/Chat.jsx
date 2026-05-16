@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 import {
   AttachFile as AttachFileIcon,
   Send as SendIcon,
@@ -10,7 +12,12 @@ import AppLayout from "../components/layout/AppLayout";
 import { grayColor, orange } from "../constants/color";
 import MessageComponent from "../components/shared/MessageComponent";
 import { getSocket } from "../socket";
-import { NEW_MESSAGE, START_TYPING, STOP_TYPING } from "../constants/events.js";
+import {
+  NEW_MESSAGE,
+  START_TYPING,
+  STOP_TYPING,
+  ALERT,
+} from "../constants/events.js";
 import { useChatDetailsQuery, useGetMessagesQuery } from "../redux/api/api.js";
 import { useErrors, useSocketEvents } from "../hooks/hook.jsx";
 import { useInfiniteScrollTop } from "6pp";
@@ -23,6 +30,7 @@ const Chat = ({ chatId, user }) => {
   const socket = getSocket();
   const dispatch = useDispatch();
   const containerRef = useRef(null);
+  const bottomRef = useRef(null);
 
   const [message, setMessage] = useState("");
 
@@ -36,11 +44,11 @@ const Chat = ({ chatId, user }) => {
 
   const [userTyping, setUserTyping] = useState(false);
 
-  console.log(userTyping, "USertyping");
-
   const typingTimeout = useRef(null);
 
-  const chatDetails = useChatDetailsQuery({ chatId, skip: !chatId });
+  console.log(userTyping);
+
+  const chatDetails = useChatDetailsQuery({ chatId }, { skip: !chatId });
 
   const oldMessagesChunk = useGetMessagesQuery({
     chatId,
@@ -93,7 +101,7 @@ const Chat = ({ chatId, user }) => {
     if (!message.trim()) return;
 
     const tempMessage = {
-      _id: Date.now(),
+      _id: `temp-${Date.now()}`,
       content: message,
       sender: user,
       chatId,
@@ -103,7 +111,7 @@ const Chat = ({ chatId, user }) => {
     // ✅ instant UI update
     setMessages((prev) => [...prev, tempMessage]);
 
-    //Emmitting message to server
+    // Emmitting message to server
 
     socket.emit(NEW_MESSAGE, { chatId, members, message });
     setMessage("");
@@ -125,41 +133,60 @@ const Chat = ({ chatId, user }) => {
   }, [chatId]);
 
   useEffect(() => {
-    if (!oldMessages?.length) return;
-
-    setMessages((prev) => {
-      // first load
-      if (prev.length === 0) return oldMessages;
-
-      // merge without duplicates
-      const merged = [...prev];
-
-      oldMessages.forEach((msg) => {
-        const exists = merged.find((m) => m._id === msg._id);
-        if (!exists) merged.push(msg);
-      });
-
-      return merged;
-    });
-  }, [oldMessages]);
-
-  useEffect(() => {
-    containerRef.current?.scrollTo({
-      top: containerRef.current.scrollHeight,
-      behavior: "smooth",
-    });
+    if (bottomRef.current)
+      bottomRef.current.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // useEffect(() => {
+  //   if (!oldMessages?.length) return;
+
+  //   setMessages((prev) => {
+  //     // first load
+  //     if (prev.length === 0) return oldMessages;
+
+  //     // merge without duplicates
+  //     const merged = [...prev];
+
+  //     oldMessages.forEach((msg) => {
+  //       const exists = merged.find((m) => m._id === msg._id);
+  //       if (!exists) merged.push(msg);
+  //     });
+
+  //     return merged;
+  //   });
+  // }, [oldMessages]);
+
+  // const newMessageHandler = useCallback(
+  //   (data) => {
+  //     if (data.chatId !== chatId) return;
+
+  //     // setMessages((prev) => [...prev, data.message]);
+
+  //     setMessages((prev) => {
+  //       const exist = prev.find((m) => m._id === data.message._id);
+  //       if (exist) return prev;
+  //       return [...prev, data.message];
+  //     });
+  //   },
+  //   [chatId],
+  // );
 
   const newMessageHandler = useCallback(
     (data) => {
+      console.log("NEW_MESSAGE RECEIVED", data);
       if (data.chatId !== chatId) return;
 
-      // setMessages((prev) => [...prev, data.message]);
-
       setMessages((prev) => {
-        const exist = prev.find((m) => m._id === data.message._id);
-        if (exist) return prev;
-        return [...prev, data.message];
+        // remove temp message with same content + sender
+        const filtered = prev.filter(
+          (m) =>
+            !(
+              m.content === data.message.content &&
+              m.sender._id === data.message.sender._id
+            ),
+        );
+
+        return [...filtered, data.message];
       });
     },
     [chatId],
@@ -168,6 +195,7 @@ const Chat = ({ chatId, user }) => {
   const startTypingListener = useCallback(
     (data) => {
       if (data.chatId !== chatId) return;
+      console.log("Start Typing", data);
       setUserTyping(true);
     },
     [chatId],
@@ -176,22 +204,44 @@ const Chat = ({ chatId, user }) => {
   const stopTypingListener = useCallback(
     (data) => {
       if (data.chatId !== chatId) return;
+      console.log("Stop Typing", data);
       setUserTyping(false);
     },
     [chatId],
   );
 
-  const eventArr = {
-    [NEW_MESSAGE]: newMessageHandler,
-    [START_TYPING]: startTypingListener,
-    [STOP_TYPING]: stopTypingListener,
-  };
+  const alertListener = useCallback(
+    (content) => {
+      const messageForAlert = {
+        content,
+        sender: {
+          _id: "sdfhkdfhgkdfhygkf",
+          name: "Admin",
+        },
+        chat: chatId,
+        createdAt: new Date().toISOString(),
+      };
+
+      setMessages((prev) => [...prev, messageForAlert]);
+    },
+    [chatId],
+  );
+
+  const eventArr = useMemo(
+    () => ({
+      [ALERT]: alertListener,
+      [NEW_MESSAGE]: newMessageHandler,
+      [START_TYPING]: startTypingListener,
+      [STOP_TYPING]: stopTypingListener,
+    }),
+    [alertListener, newMessageHandler, startTypingListener, stopTypingListener],
+  );
 
   useSocketEvents(socket, eventArr);
 
   useErrors(errors);
 
-  const allMessages = messages;
+  const allMessages = [...(oldMessages || []), ...messages];
 
   // return chatDetails.isLoading ? (
   //   <Skeleton />
@@ -213,7 +263,9 @@ const Chat = ({ chatId, user }) => {
         {allMessages.map((i) => (
           <MessageComponent key={i._id} message={i} user={user} />
         ))}
-        <div>{userTyping && <TypingLoader />}</div>
+        {userTyping && <TypingLoader />}
+
+        <div ref={bottomRef} />
       </Stack>
       <form
         style={{

@@ -88,11 +88,11 @@ io.use((socket, next) => {
 io.on("connection", (socket) => {
   const user = socket.user;
 
-  console.log("user connected", user);
+  // console.log("user connected", user);
 
   userSocketIDs.set(user._id.toString(), socket.id);
 
-  console.log(userSocketIDs);
+  // console.log(userSocketIDs);
 
   socket.on(NEW_MESSAGE, async ({ chatId, members, message }) => {
     const messageForRealTime = {
@@ -113,11 +113,20 @@ io.on("connection", (socket) => {
     };
 
     const membersSocket = getSockets(members);
-    io.to(membersSocket).emit(NEW_MESSAGE, {
-      chatId,
-      message: messageForRealTime,
+    // const membersSocket = getSockets(members.map((m) => m._id));
+    membersSocket.forEach((socketId) => {
+      io.to(socketId).emit(NEW_MESSAGE, {
+        chatId,
+        message: messageForRealTime,
+      });
+
+      io.to(socketId).emit(NEW_MESSAGE_ALERT, {
+        chatId,
+      });
     });
-    io.to(membersSocket).emit(NEW_MESSAGE_ALERT, { chatId });
+
+    console.log("MEMBERS", members);
+    console.log("SOCKET IDS", membersSocket);
 
     try {
       await Message.create(messageForDb);
@@ -127,17 +136,19 @@ io.on("connection", (socket) => {
   });
 
   socket.on(START_TYPING, ({ members, chatId }) => {
-    console.log("typing", members, chatId);
-
     const membersSocket = getSockets(members);
-    socket.to(membersSocket).emit(START_TYPING, { chatId });
+    membersSocket.forEach((socketId) => {
+      socket.to(socketId).emit(START_TYPING, { chatId });
+    });
+    console.log("typing", members, chatId);
   });
 
   socket.on(STOP_TYPING, ({ members, chatId }) => {
-    console.log("Stopped Typing", members, chatId);
-
     const membersSocket = getSockets(members);
-    socket.to(membersSocket).emit(STOP_TYPING, { chatId });
+    membersSocket.forEach((socketId) => {
+      socket.to(socketId).emit(STOP_TYPING, { chatId });
+    });
+    console.log("Stopped Typing", members, chatId);
   });
 
   socket.on("disconnect", () => {
